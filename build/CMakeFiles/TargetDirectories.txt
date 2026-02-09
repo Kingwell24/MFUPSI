@@ -1,0 +1,7 @@
+/home/kingwell/FL/MFUPSI/PerformanceTest/build/CMakeFiles/mfupsi_perf_test.dir
+/home/kingwell/FL/MFUPSI/PerformanceTest/build/CMakeFiles/edit_cache.dir
+/home/kingwell/FL/MFUPSI/PerformanceTest/build/CMakeFiles/rebuild_cache.dir
+/home/kingwell/FL/MFUPSI/PerformanceTest/build/CMakeFiles/list_install_components.dir
+/home/kingwell/FL/MFUPSI/PerformanceTest/build/CMakeFiles/install.dir
+/home/kingwell/FL/MFUPSI/PerformanceTest/build/CMakeFiles/install/local.dir
+/home/kingwell/FL/MFUPSI/PerformanceTest/build/CMakeFiles/install/strip.dir

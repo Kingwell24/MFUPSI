@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -march=native -DNDEBUG CMakeFiles/mfupsi_perf_test.dir/src/main.cpp.o CMakeFiles/mfupsi_perf_test.dir/src/protocol.cpp.o -o mfupsi_perf_test  -lm 

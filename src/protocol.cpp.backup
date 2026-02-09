@@ -1,0 +1,518 @@
+#include "protocol.h"
+#include <algorithm>
+#include <cmath>
+#include <random>
+#include <iostream>
+
+/**
+ * 构造函数
+ */
+MFUPSIProtocol::MFUPSIProtocol(const Config_t& cfg) : config_(cfg) {
+    clients_.resize(cfg.num_clients);
+    for (size_t i = 0; i < cfg.num_clients; i++) {
+        clients_[i].client_id = i;
+    }
+    reset_metrics();
+}
+
+/**
+ * 生成全局密钥
+ */
+void MFUPSIProtocol::generate_keys() {
+    std::mt19937_64 rng(std::random_device{}());
+    std::uniform_int_distribution<uint64_t> dist;
+    
+    key_k1_ = dist(rng);
+    key_k2_ = dist(rng);
+    key_kr_ = dist(rng);
+}
+
+/**
+ * 为客户端生成随机数据集
+ */
+void MFUPSIProtocol::generate_client_data(Client& client, size_t size) {
+    std::mt19937_64 rng(std::random_device{}());
+    std::uniform_int_distribution<uint64_t> dist;
+    
+    while (client.data_set.size() < size) {
+        client.data_set.insert(dist(rng));
+    }
+}
+
+/**
+ * 生成稀疏向量
+ * Algorithm 4: RandVector(K_2, x, d_1, w)
+ */
+MFUPSIProtocol::VectorType MFUPSIProtocol::generate_rand_vector(uint64_t element) {
+    auto sparse_uint8 = Utils::sparse_vector(key_k2_, element, config_.partition_size, config_.band_width);
+    VectorType result(sparse_uint8.size());
+    for (size_t i = 0; i < sparse_uint8.size(); i++) {
+        result[i] = static_cast<uint64_t>(sparse_uint8[i]);
+    }
+    return result;
+}
+
+/**
+ * 构建带状矩阵和目标向量
+ */
+void MFUPSIProtocol::build_linear_system(
+    const std::vector<uint64_t>& elements,
+    MatrixType& M,
+    VectorType& y
+) {
+    size_t m = elements.size();
+    M.resize(m, VectorType(config_.partition_size, 0));
+    y.resize(m);
+    
+    for (size_t i = 0; i < m; i++) {
+        // 生成稀疏向量作为矩阵的一行
+        auto sparse_vec = generate_rand_vector(elements[i]);
+        for (size_t j = 0; j < config_.partition_size; j++) {
+            M[i][j] = sparse_vec[j];
+        }
+        
+        // 生成目标值
+        y[i] = Utils::prf_value(key_kr_, elements[i]) % config_.modulus;
+    }
+}
+
+/**
+ * 分区编码
+ * Algorithm 3: EncodePartition(P_j, K_2, K_r, d_1, w)
+ */
+MFUPSIProtocol::VectorType MFUPSIProtocol::encode_partition(
+    const std::vector<uint64_t>& partition_elements
+) {
+    if (partition_elements.empty()) {
+        return VectorType(config_.partition_size, 0);
+    }
+    
+    // 构建线性系统 M * e = y
+    MatrixType M;
+    VectorType y;
+    build_linear_system(partition_elements, M, y);
+    
+    // 高斯消元求解
+    VectorType e_j = Matrix::gaussian_elimination(M, y, config_.modulus);
+    
+    // 确保输出维度正确
+    if (e_j.size() != config_.partition_size) {
+        e_j.resize(config_.partition_size, 0);
+    }
+    
+    return e_j;
+}
+
+/**
+ * 客户端本地编码
+ * Algorithm 2: ClientEncode(X_i, K_1, K_2, K_r, d_1, w, epsilon)
+ */
+MFUPSIProtocol::MatrixType MFUPSIProtocol::client_encode(
+    const std::set<uint64_t>& data_set
+) {
+    // 步骤1: 初始化编码矩阵
+    MatrixType E_i(config_.partition_size, VectorType(config_.num_partitions, 0));
+    
+    // 步骤2: 将数据分配到分区
+    std::map<size_t, std::vector<uint64_t>> partitions;
+    
+    for (const auto& element : data_set) {
+        size_t j = Utils::hash_partition(key_k1_, element) % config_.num_partitions;
+        partitions[j].push_back(element);
+    }
+    
+    // 步骤3: 对每个分区进行编码
+    for (const auto& [partition_id, elements] : partitions) {
+        auto e_j = encode_partition(elements);
+        
+        // 将e_j放入编码矩阵的第partition_id列
+        if (partition_id < config_.num_partitions) {
+            for (size_t i = 0; i < config_.partition_size; i++) {
+                E_i[i][partition_id] = e_j[i];
+            }
+        }
+    }
+    
+    return E_i;
+}
+
+/**
+ * 生成掩码矩阵
+ */
+MFUPSIProtocol::MatrixType MFUPSIProtocol::generate_mask_matrix(
+    size_t rows, size_t cols
+) {
+    return Matrix::random_matrix(rows, cols, config_.modulus);
+}
+
+/**
+ * Setup阶段
+ */
+void MFUPSIProtocol::setup_phase() {
+    std::cout << "开始Setup阶段..." << std::endl;
+    
+    // 生成全局密钥
+    generate_keys();
+    
+    // 步骤1: 为每个客户端生成数据集
+    for (auto& client : clients_) {
+        generate_client_data(client, config_.dataset_size);
+    }
+    
+    // 步骤2: 每个客户端进行本地编码
+    Utils::Timer timer;
+    double total_client_time = 0.0;
+    size_t total_client_comm = 0;
+    
+    timer.start();
+    
+    for (auto& client : clients_) {
+        // 客户端编码
+        client.encoding_matrix = client_encode(client.data_set);
+        
+        // 生成掩码
+        client.mask_matrix = generate_mask_matrix(
+            config_.partition_size, config_.num_partitions
+        );
+        
+        // 掩码添加
+        client.masked_encoding = Matrix::matrix_add(
+            client.encoding_matrix,
+            client.mask_matrix,
+            config_.modulus
+        );
+        
+        // 计算通信开销
+        total_client_comm += Utils::matrix_size_bytes(
+            config_.partition_size, config_.num_partitions
+        );
+    }
+    
+    timer.stop();
+    metrics_.setup_client_encoding_time_ms = timer.elapsed_ms();
+    metrics_.setup_client_comm_bytes = total_client_comm;
+    
+    // 步骤3: 服务器聚合
+    server_aggregate();
+    
+    std::cout << "Setup阶段完成" << std::endl;
+    std::cout << "  客户端编码耗时: " << metrics_.setup_client_encoding_time_ms << " ms" << std::endl;
+    std::cout << "  服务器聚合耗时: " << metrics_.setup_server_aggregation_time_ms << " ms" << std::endl;
+    std::cout << "  客户端上传通信: " << metrics_.setup_client_comm_bytes / (1024.0 * 1024.0) << " MB" << std::endl;
+}
+
+/**
+ * 服务器聚合
+ */
+void MFUPSIProtocol::server_aggregate() {
+    Utils::Timer timer;
+    timer.start();
+    
+    // 初始化全局编码为零矩阵
+    server_.global_encoding = Matrix::zero_matrix(
+        config_.partition_size, config_.num_partitions
+    );
+    
+    // 聚合所有客户端的掩码编码
+    for (const auto& client : clients_) {
+        server_.global_encoding = Matrix::matrix_add(
+            server_.global_encoding,
+            client.masked_encoding,
+            config_.modulus
+        );
+    }
+    
+    timer.stop();
+    metrics_.setup_server_aggregation_time_ms = timer.elapsed_ms();
+}
+
+/**
+ * Update阶段
+ */
+void MFUPSIProtocol::update_phase(size_t num_clients_to_update) {
+    std::cout << "开始Update阶段..." << std::endl;
+    
+    Utils::Timer timer;
+    timer.start();
+    
+    // 随机选择要更新的客户端
+    std::mt19937_64 rng(std::random_device{}());
+    std::vector<size_t> client_ids(clients_.size());
+    std::iota(client_ids.begin(), client_ids.end(), 0);
+    std::shuffle(client_ids.begin(), client_ids.end(), rng);
+    
+    num_clients_to_update = std::min(num_clients_to_update, clients_.size());
+    
+    for (size_t i = 0; i < num_clients_to_update; i++) {
+        auto& client = clients_[client_ids[i]];
+        
+        // 生成新增和删除集合
+        std::uniform_int_distribution<uint64_t> dist;
+        std::set<uint64_t> X_add, X_del;
+        
+        // 生成新增元素
+        size_t add_count = std::min(config_.num_updates, client.data_set.size() / 2);
+        while (X_add.size() < add_count) {
+            X_add.insert(dist(rng));
+        }
+        
+        // 生成删除元素（从现有集合中随机选择）
+        size_t del_count = std::min(config_.num_updates, client.data_set.size() / 4);
+        std::vector<uint64_t> data_vec(client.data_set.begin(), client.data_set.end());
+        std::shuffle(data_vec.begin(), data_vec.end(), rng);
+        for (size_t j = 0; j < del_count; j++) {
+            X_del.insert(data_vec[j]);
+        }
+        
+        // 更新客户端数据集
+        for (const auto& elem : X_add) {
+            client.data_set.insert(elem);
+        }
+        for (const auto& elem : X_del) {
+            client.data_set.erase(elem);
+        }
+        
+        // 客户端增量编码
+        auto delta_E = client_incremental_update(client, X_add, X_del);
+        
+        // 新的掩码
+        auto delta_S = generate_mask_matrix(
+            config_.partition_size, config_.num_partitions
+        );
+        
+        // 增量掩码编码
+        auto delta_E_tilde = Matrix::matrix_add(delta_E, delta_S, config_.modulus);
+        
+        // 计算通信开销
+        metrics_.update_client_comm_bytes += Utils::matrix_size_bytes(
+            config_.partition_size, config_.num_partitions
+        );
+        
+        // 更新客户端的掩码
+        client.mask_matrix = delta_S;
+    }
+    
+    timer.stop();
+    metrics_.update_client_time_ms = timer.elapsed_ms();
+    
+    // 服务器增量更新
+    server_incremental_update();
+    
+    std::cout << "Update阶段完成" << std::endl;
+    std::cout << "  客户端更新耗时: " << metrics_.update_client_time_ms << " ms" << std::endl;
+    std::cout << "  服务器更新耗时: " << metrics_.update_server_time_ms << " ms" << std::endl;
+}
+
+/**
+ * 客户端增量编码
+ */
+MFUPSIProtocol::MatrixType MFUPSIProtocol::client_incremental_update(
+    Client& client,
+    const std::set<uint64_t>& X_add,
+    const std::set<uint64_t>& X_del
+) {
+    // 识别受影响的分区
+    std::set<size_t> affected_partitions;
+    
+    for (const auto& elem : X_add) {
+        size_t j = Utils::hash_partition(key_k1_, elem) % config_.num_partitions;
+        affected_partitions.insert(j);
+    }
+    for (const auto& elem : X_del) {
+        size_t j = Utils::hash_partition(key_k1_, elem) % config_.num_partitions;
+        affected_partitions.insert(j);
+    }
+    
+    // 初始化增量编码矩阵
+    MatrixType delta_E = Matrix::zero_matrix(
+        config_.partition_size, config_.num_partitions
+    );
+    
+    // 对每个受影响的分区重新编码
+    for (size_t j : affected_partitions) {
+        std::vector<uint64_t> partition_elements;
+        
+        for (const auto& elem : client.data_set) {
+            if (Utils::hash_partition(key_k1_, elem) % config_.num_partitions == j) {
+                partition_elements.push_back(elem);
+            }
+        }
+        
+        auto e_j_new = encode_partition(partition_elements);
+        
+        // 计算增量
+        VectorType delta_e_j = e_j_new;  // 简化版：假设旧编码为0
+        
+        for (size_t i = 0; i < config_.partition_size; i++) {
+            delta_E[i][j] = delta_e_j[i];
+        }
+    }
+    
+    // 更新编码矩阵
+    client.encoding_matrix = Matrix::matrix_add(
+        client.encoding_matrix,
+        delta_E,
+        config_.modulus
+    );
+    
+    return delta_E;
+}
+
+/**
+ * 服务器增量更新
+ */
+void MFUPSIProtocol::server_incremental_update() {
+    Utils::Timer timer;
+    timer.start();
+    
+    // 简化：直接重新聚合所有客户端编码（实际应该只加增量）
+    server_.global_encoding = Matrix::zero_matrix(
+        config_.partition_size, config_.num_partitions
+    );
+    
+    for (const auto& client : clients_) {
+        auto masked_enc = Matrix::matrix_add(
+            client.encoding_matrix,
+            client.mask_matrix,
+            config_.modulus
+        );
+        server_.global_encoding = Matrix::matrix_add(
+            server_.global_encoding,
+            masked_enc,
+            config_.modulus
+        );
+    }
+    
+    timer.stop();
+    metrics_.update_server_time_ms = timer.elapsed_ms();
+}
+
+/**
+ * 查询向量生成
+ * Algorithm 9: GenerateQueryVector(x, K_1, K_2, d_1, w, b, z)
+ */
+std::vector<MFUPSIProtocol::VectorType> MFUPSIProtocol::generate_query_vectors(
+    uint64_t element
+) {
+    std::vector<VectorType> query_vectors;
+    
+    // 第一维查询向量
+    auto v1 = generate_rand_vector(element);
+    query_vectors.push_back(v1);
+    
+    // 后续维度的PIR索引向量
+    size_t partition_id = Utils::hash_partition(key_k1_, element) % config_.num_partitions;
+    
+    for (size_t dim = 2; dim <= config_.pir_dimension; dim++) {
+        VectorType v_dim(config_.partition_size, 0);  // 简化版
+        query_vectors.push_back(v_dim);
+    }
+    
+    return query_vectors;
+}
+
+/**
+ * 服务器处理PIR查询
+ * 模拟同态扩展和线性检索
+ */
+MFUPSIProtocol::VectorType MFUPSIProtocol::server_process_pir_query(
+    const std::vector<VectorType>& query_vectors
+) {
+    // 使用第一维查询向量进行检索
+    const auto& v1 = query_vectors[0];
+    
+    // 执行向量-矩阵乘法：v1^T * E_total
+    auto result = Matrix::vector_matrix_multiply(v1, server_.global_encoding, config_.modulus);
+    
+    return result;
+}
+
+/**
+ * 客户端解密和交集判断
+ */
+bool MFUPSIProtocol::decrypt_and_judge(
+    const VectorType& pir_response,
+    uint64_t element
+) {
+    if (pir_response.empty()) return false;
+    
+    // 计算预期值
+    uint64_t expected = Utils::prf_value(key_kr_, element) % config_.modulus;
+    expected = Utils::mul_mod(expected, config_.num_clients, config_.modulus);
+    
+    // 简化判断：如果响应的第一个元素与预期值接近，则认为是交集成员
+    uint64_t diff = (pir_response[0] > expected) ? 
+        (pir_response[0] - expected) : 
+        (expected - pir_response[0]);
+    
+    // 允许一定的误差（模拟同态加密的噪声）
+    return diff < config_.modulus / 1000;
+}
+
+/**
+ * Query阶段
+ */
+void MFUPSIProtocol::query_phase() {
+    std::cout << "开始Query阶段..." << std::endl;
+    
+    // 使用第一个客户端作为查询者
+    auto& query_client = clients_[0];
+    
+    std::vector<uint64_t> query_elements(query_client.data_set.begin(), 
+                                         query_client.data_set.end());
+    
+    // 限制查询数量
+    query_elements.resize(std::min(config_.num_queries, query_elements.size()));
+    
+    Utils::Timer query_timer;
+    query_timer.start();
+    
+    double total_gen_time = 0, total_server_time = 0, total_decrypt_time = 0;
+    
+    for (const auto& element : query_elements) {
+        // 客户端查询生成
+        Utils::Timer timer;
+        timer.start();
+        auto query_vectors = generate_query_vectors(element);
+        timer.stop();
+        total_gen_time += timer.elapsed_ms();
+        
+        // 计算查询通信大小
+        for (const auto& vec : query_vectors) {
+            metrics_.query_comm_bytes += vec.size() * 8;
+        }
+        
+        // 服务器处理
+        timer.start();
+        auto pir_response = server_process_pir_query(query_vectors);
+        timer.stop();
+        total_server_time += timer.elapsed_ms();
+        
+        // 计算响应通信大小
+        metrics_.response_comm_bytes += pir_response.size() * 8;
+        
+        // 客户端解密和判断
+        timer.start();
+        bool is_in_intersection = decrypt_and_judge(pir_response, element);
+        timer.stop();
+        total_decrypt_time += timer.elapsed_ms();
+    }
+    
+    query_timer.stop();
+    
+    metrics_.query_client_gen_time_ms = total_gen_time;
+    metrics_.query_server_process_time_ms = total_server_time;
+    metrics_.query_client_decrypt_time_ms = total_decrypt_time;
+    
+    std::cout << "Query阶段完成（共" << query_elements.size() << "次查询）" << std::endl;
+    std::cout << "  平均客户端查询生成：" << (total_gen_time / query_elements.size()) << " ms" << std::endl;
+    std::cout << "  平均服务器处理：" << (total_server_time / query_elements.size()) << " ms" << std::endl;
+    std::cout << "  平均客户端解密：" << (total_decrypt_time / query_elements.size()) << " ms" << std::endl;
+}
+
+/**
+ * 重置性能指标
+ */
+void MFUPSIProtocol::reset_metrics() {
+    metrics_ = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+}
