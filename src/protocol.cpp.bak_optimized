@@ -472,9 +472,8 @@ void MFUPSIProtocol::initialize_lwe_key() {
 }
 
 /**
- * 生成高效PIR密文（Ring-LWE编码）
- * 代替底层朴素LWE矩阵，模拟OnionPIR的高效密文编码
- * 在OnionPIR中，单个维度的查询密文大小约为 64 KB（包含多项式环元素的打包编码）
+ * 生成GSW密文矩阵：大小(2*N_lwe) × (2*N_lwe)
+ * 这里只是生成随机矩阵用于模拟计算开销
  */
 MFUPSIProtocol::GSWCiphertext MFUPSIProtocol::generate_gsw_ciphertext_for_coordinate(
     size_t coordinate, size_t L
@@ -482,9 +481,8 @@ MFUPSIProtocol::GSWCiphertext MFUPSIProtocol::generate_gsw_ciphertext_for_coordi
     GSWCiphertext ct;
     ct.dimension = config_.lwe_dimension;
     
-    // 简化模型：Ring-LWE密文而不是(2*N_lwe)^2矩阵
-    // 实际通信大小在query_phase中以64KB统计
-    ct.matrix = MatrixType(1, VectorType(1, 1));
+    size_t gsw_dim = 2 * config_.lwe_dimension;
+    ct.matrix = Matrix::random_matrix(gsw_dim, gsw_dim, config_.modulus);
     
     return ct;
 }
@@ -529,17 +527,19 @@ std::vector<MFUPSIProtocol::VectorType> MFUPSIProtocol::generate_z_selection_vec
 }
 
 /**
- * 高效PIR服务器处理：维度折叠（Ring-LWE版）
+ * 模拟z维PIR服务器处理：维度折叠
  * 
- * 改进模型：使用NTT优化的多项式同态运算而不是朴素矩阵乘法
+ * 这是最复杂的部分，需要模拟z轮的同态运算
  * 
- * 算法流程（高效版）：
+ * 算法流程：
  * 1. 初始化当前编码矩阵为E_total（d_1 × b）
- * 2. 对于第1维：使用NTT加速的多项式乘法：O(N log N)
- * 3. 对于第2维到第z维：通过Ring-LWE优化的同态运算实现
+ * 2. 对于第1维：
+ *    - 使用v1（长度b）与E_total相乘：result1 = v1^T · E_total（1 × d_1）
+ * 3. 对于第2维到第z维：
+ *    - 通过GSW外部积对结果进行维度压缩
+ *    - 每一维的折叠将数据量从b/L^(i-1) 压缩到 b/L^i
  * 
- * 总的计算复杂度：约 z × N log N 次运算（N为多项式度数d_1）
- * 相比朴素LWE的 z × N³，这是指数级的改进
+ * 总的矩阵乘法复杂度：约 z × b 次运算
  */
 MFUPSIProtocol::VectorType MFUPSIProtocol::server_process_pir_query_z_dimension(
     const std::vector<VectorType>& z_selection_vectors
@@ -650,9 +650,29 @@ MFUPSIProtocol::VectorType MFUPSIProtocol::server_process_pir_query_z_dimension(
             // 我们通过执行额外的矩阵乘法来模拟这个开销
             // 执行约current_data_scale次小规模矩阵乘法
             
-            // GSW同态计算已通过Ring-LWE配置参数化
-            // 避免执行O(N³)的矩阵乘法，改为NTT参数化模型
-            // 实际计算通过同态加密库(如OpenFHE)的优化实现
+            if (current_data_scale > 0 && current_data_scale <= L) {
+                // 为了进一步确保计算开销，执行额外的矩阵乘法
+                // 代表GSW同态操作的高复杂度
+                size_t gsw_ops = std::min(current_data_scale * 2, L);
+                
+                for (size_t op = 0; op < gsw_ops; op++) {
+                    // 生成临时的小矩阵（代表GSW中间结果）
+                    MatrixType small_gsw_matrix = Matrix::random_matrix(
+                        std::min(256UL, 2 * N_lwe),
+                        std::min(256UL, 2 * N_lwe),
+                        config_.modulus
+                    );
+                    
+                    // 与一个小向量相乘（保持在合理的计算范围内）
+                    VectorType small_vec(small_gsw_matrix.size(), 1);
+                    auto _ = Matrix::vector_matrix_multiply(
+                        small_vec,
+                        small_gsw_matrix,
+                        config_.modulus
+                    );
+                    (void)_;  // 避免unused variable警告
+                }
+            }
         }
     }
     
@@ -733,11 +753,8 @@ void MFUPSIProtocol::query_phase() {
         
         // 计算查询通信大小：z个GSW矩阵
         // 每个GSW矩阵大小：(2*N_lwe)^2 * 8 bytes
-        // ======= 修正通信模型：使用OnionPIR的高效大小 =======
-        // 不使用完整的(2*N_lwe)^2矩阵大小，改用Ring-LWE优化后的大小
-        const size_t EFFICIENT_PIR_QUERY_SIZE_KB = 64;  // 64KB per dimension
-        size_t query_size_per_dim = EFFICIENT_PIR_QUERY_SIZE_KB * 1024;
-        metrics_.query_comm_bytes += z * query_size_per_dim;
+        size_t gsw_matrix_size = (2 * N_lwe) * (2 * N_lwe) * 8;
+        metrics_.query_comm_bytes += z * gsw_matrix_size;
         
         // ===== 服务器处理 =====
         timer.start();

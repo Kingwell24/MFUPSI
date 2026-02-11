@@ -1,0 +1,165 @@
+V. PERFORMANCE EVALUATION
+A. Theoretical Analysis
+In this section, we review our FUPSI protocol and analyze
+its features and efficiency theoretically. We firstly give the
+comparison of PSI features of protocols in Table II.
+We compare our work with other three PSI protocols in
+terms of three properties. Firstly, the four protocols all achieve
+updatable based on different techniques. Here Parallel means
+the protocol allows parties to add and delete simultaneouslyin once update. Our FUPSI and UPSI [14] satisfy this requirement. However, UPSI [14] only supports weak deletion, which
+is definitely inflexible in real applications. They are applied
+for two-party setting, apart from Feather [13], which needs an
+additional server for outsourced computing.
+Denote that N is the size of the new set and Nd represents
+the size of update set. We utilize standard PIR as a module
+and state s as the sum of request size and response size, c as
+the sum of Query and Answer complexity in the underlying
+PIR scheme. w is the size of non-zero band in random rand
+matrix. In the following part, we analyze FUPSI from the
+communication and computational complexity respectively.
+1) Communication Complexity: In our FUPSI, communication overhead mainly comes from the underlying PIR. During
+update phase, for each iteration, two parties transmit the
+parameters of update elements. There are two operations for
+each element in our setting, allowing two parties to add or
+delete data. Since the client only queries added elements but
+not deleted elements, the parameters generated for queries will
+be only O(logNd ) ultimately. Two parties serve as the server
+in turn, and require executing O(2logNd ) times standard PIR.
+Assumed that the total communication overhead of request
+and response in standard PIR is s, we get O(2slogNd ) for
+calculating PSI of cross sets.
+After gaining the intersection of cross sets, two parties will
+transmit it to each other. The size of the intersection Ix and
+Iy does not exceed Nd . For simplicity, we consider the size
+to be logNd , due to two opposite operations. Therefore, the
+asymptotic communication overhead is O(2slogNd+2logNd ).
+2) Computational Complexity: In our work, we need to
+call standard PIR protocols to achieve intersection calculation,
+which is the primary contributor to the computational overhead. As we explained in communication complexity, we will
+call 5 PIR.Query and 5 PIR.Answer for O(2logNd ) times.
+Assumed that the computational cost of Query and Answer
+adds up to c, the asymptotic computational complexity of
+FUPSI is O(2clogNd ).
+Apart from Query and Answer time of underlying PIR,
+our computational cost also contains hash calculations. In the
+called Encode algorithm, the server performs N times hash
+function computing for partitioning. Then for each partition,
+computing random band matrix M needs wN hash calculations. For the representation rep, two parties can precompute it
+offline. Next, we need to call RandVector again, which brings
+wlogNd times hash calculation. So finally FUPSI requires
+(w + 1)N + wlogNd times hash computation. However, hash
+calculations are so fast and cheap that we can ignore them in
+asymptotic computational complexity.We compare our FUPSI with several protocols in terms
+of theoretical communication and computational complexity
+as shown in Table III. UPSI [14] is the latest solution of
+updatable PSI. KKRT16 [5], spot-fast [43] and CM20 [22]
+are efficient semi-honest PSI protocols and they have best
+performance under different bandwidths. Assumed that the set
+size of two parties both equals to N, and ℓ is the width of OT
+extension matrix [5]. From this table it is oblivious that the
+communication cost of UPSI [14] and our FUPSI only grows
+with Nd , but the others’ communication cost grows with N.
+As the entire database size increases, communication overhead
+in KKRT16, spot-fast and CM20 will increase dramatically,
+since N ≫ Nd . So UPSI and FUPSI have better performance
+in communication overhead.
+For computational complexity, compared with other protocols, our work calls standard PIR schemes and requires
+relatively more public key operations when Nd and N are
+both small. So the advantages of our protocol are not in
+evidence initially. Nevertheless, our computational amount
+increases slowly with Nd while the computational cost of
+KKRT16, spot-fast and CM20 grows with N. Therefore,
+FUPSI is more efficient than them when N is enormous.
+Among the five schemes, UPSI has the smallest computational
+complexity. However, it cannot support addition and deletion
+simultaneously compared with our FUPSI.
+Rather than retrieving a single entry, we execute O(logNd )
+times keyword PIR on each update. Therefore, we consider it
+will be more efficient to construct batch updatable PSI, which
+reduces both communication and computational overhead.
+Different from FUPSI, batch PSI will utilize batch keyword
+PIR. We just give an idea and do not present this scheme in
+detail. To implement this solution, readers can refer to batch
+PIR in [35] and [44].
+B. Implementation and Experimental Results
+We implemented FUPSI by integrating it with open-source
+schemes OnionPIR [45], Spiral [46] and choose the parameters used in PIR consistent with sparsePIR [35]. OnionPIR
+only costs 4.2x response size overhead (in comparison to an
+insecure baseline), as opposed to the 100x overhead observed
+in recent schemes such as SealPIR. But it holds a comparable
+computational cost to SealPIR. Besides, the request size for
+OnionPIR remains fixed at 64 KB, regardless of the practical
+magnitude of the database, which ensures the high efficiency
+of FUPSI. We initial the computational security parameter as
+λ = 128. Our experiments setup utilizes machines runningUbuntu PCs equipped with 12 cores, 3.7 GHz Intel Xeon
+W-2135 and 64 GB of RAM. We leverage the AVX2,
+AVX-512 instruction sets with SIMD instructions activated.
+Our experiments are executed with single-thread. The results
+we report are the averages derived from a minimum of
+10 experimental runs, with a standard deviation of less than
+10% from these averages.
+UPSI [14] is the latest two-party updatable private set intersection protocol, which supports two-sided PSI with addition
+on a daily basis. Although UPSI does not assure deletable
+and forward privacy, we still compare the performance with
+two-sided UPSI with addition for the completeness of our
+comparison.
+In addition to UPSI, we also compare our FUPSI with
+current efficient semi-honest PSI approaches in different bandwidth settings. KKRT16 [5] is a lightweight OT-based PSI
+protocol, which is extremely efficient to generate enormous
+amounts of OPRF instances. Through the defined BaRK-OPRF
+protocol, KKRT16 can realize private keyword search function. SpOT [43] achieves a balance between communication
+and computation and has best performance on slow networks.
+It has two variants: spot-fast for optimized speed and spot-slow
+for optimized communication. In this paper, we only compare
+our work with spot-fast. CM20 [22] attains a superior tradeoff between computational complexity and communication
+overhead and demonstrates the highest operational speed in
+moderate networks.
+Refer to Table IV for the experimental results.
+From the above table, we find that UPSI and our FUPSI
+remains unchanged in communication cost, since their transmission consumption only grows with the size of update
+set Nd . The communication overhead of UPSI is overall
+much lower than ours because its complexity is approximately
+O(Nd ) while ours is O(2(s+1)logNd ). The poor performanceat N = 2
+16 setting is resulted by the small difference between
+N and Nd . Our scheme has a fixed standard PIR communication cost, so that it will be inferior in initial stage. As the
+dataset size N grows to 220, our FUPSI performs obviously
+better than the other three schemes [5], [22], and [43]. With
+each update, N will be reassigned as N+Nd , while Nd remains
+almost the same. So our solution maintains absolute advantages compared with naive solutions (i.e. recomputing PSI of
+entire sets) in communication costs in updatable scenario.
+UPSI runs faster than our work in every setting for the
+O(Nd ) computational complexity, but it does not consider
+deletable and forward privacy. In N = 2
+16 and N = 2
+18
+setting, FUPSI is a little slower than [5], [22], and [43] due
+to the computational overhead of underlying PIR protocol.
+However when N increases to 218, FUPSI performs better
+than [5] and [43], since the rounds of running PIR increases
+only logarithmically with Nd . In conclusion, FUPSI is slightly
+slower than others in initial datasets, but has outstanding
+performance when datasets increase. The reason is that our
+FUPSI involves only cheap hash function calculations apart
+from underlying PIR, which ensures efficient PSI of each
+update.
+We set three different sizes of bandwidth in our experiments.
+The running time of these protocols under different bandwidth
+settings is shown in Figure 4. As the bandwidth is reduced
+from 200 Mbps to 50 Mbps, [5] is limited greatly in running
+time, for it has dependency on high bandwidth. For [22],
+the running time explodes as the bandwidth decreases to
+5Mbps. Since [22] demonstrates the most efficient in moderate
+networks and its running time increases exponentially with
+reduced bandwidth. When the bandwidth is set to 5 Mbps, the
+performance of [43] also drops drastically, but our running
+time is almost unlimited. Although the total communication
+cost remains 12 MB, the communication overhead of each
+query in PIR is extremely small, which is not restricted by
+slow networks. Therefore, observe the column of 5 Mbps, our
+protocol is superior in every setting, especially when the data
+volume substantially grows.
+In conclusion, FUPSI can adapt well to updatable PSI
+settings. Our scheme remains small communication costs even
+when the datasets are tremendous. Besides, it is not limited
+by communication bandwidth and has the best performance in
+slow networks.

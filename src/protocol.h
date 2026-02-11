@@ -8,10 +8,13 @@
 #include <map>
 #include <set>
 #include <memory>
+#include <cmath>
 
 /**
  * MFUPSI协议的三个阶段实现
  * Setup -> Update -> Query
+ * 
+ * 改进版本：正确实现PIR的z维映射和同态加密运算
  */
 
 class MFUPSIProtocol {
@@ -19,6 +22,33 @@ public:
     using Config_t = Config::ExperimentConfig;
     using MatrixType = Matrix::MatrixType;
     using VectorType = Matrix::VectorType;
+    
+    /**
+     * LWE密钥结构：用于PIR查询
+     * LWE密钥是一个长度N_lwe的向量
+     */
+    struct LWEKey {
+        VectorType secret_key;  // 秘密密钥向量（长度N_lwe）
+        size_t dimension;        // LWE維度N_lwe
+    };
+    
+    /**
+     * GSW密文矩阵结构
+     * GSW密文是一个(2*N_lwe) × (2*N_lwe)的矩阵，用于同态评估
+     */
+    struct GSWCiphertext {
+        MatrixType matrix;  // (2*N_lwe) × (2*N_lwe)的矩阵
+        size_t dimension;   // N_lwe
+    };
+    
+    /**
+     * LWE密文向量：用于服务器响应
+     * LWE密文是一对(a, b)，其中a是长度N_lwe的向量
+     */
+    struct LWECiphertext {
+        VectorType a;      // 向量部分（长度N_lwe）
+        uint64_t b;         // 标量部分
+    };
     
     /**
      * 客户端数据结构
@@ -105,9 +135,53 @@ private:
     uint64_t key_k1_;  // F_1: 分区哈希
     uint64_t key_k2_;  // F_2: 随机向量生成
     uint64_t key_kr_;  // F_r: 元素表示
+    
+    // LWE密钥（用于PIR查询）
+    LWEKey pir_lwe_key_;
 
     // 全局掩码矩阵（为所有客户端预生成，不计入计时）
     std::vector<MatrixType> global_masks_;
+    
+    // ===== PIR相关辅助计算 =====
+    
+    /**
+     * 计算z维PIR中每个维度的大小L
+     * L = ceil(b^(1/z))，其中b是分区总数
+     */
+    size_t compute_pir_dimension_size();
+    
+    /**
+     * 将分区索引j映射到z维超立方体坐标
+     * 将j视为基数L的数字，分解为z个坐标：
+     * j = idx_1 * L^(z-1) + idx_2 * L^(z-2) + ... + idx_z * L^0
+     * 
+     * 返回：z个坐标的向量[idx_1, idx_2, ..., idx_z]
+     */
+    std::vector<size_t> compute_hypercube_coordinates(size_t j);
+    
+    /**
+     * 初始化LWE密钥：生成随机秘密向量
+     */
+    void initialize_lwe_key();
+    
+    /**
+     * 生成GSW密文矩阵（模拟加密，不需要正确结果）
+     * 用于客户端查询生成，矩阵大小(2*N_lwe) × (2*N_lwe)
+     */
+    GSWCiphertext generate_gsw_ciphertext_for_coordinate(size_t coordinate, size_t L);
+    
+    /**
+     * 生成z个选择向量，每个对应超立方体中的一个维度
+     */
+    std::vector<VectorType> generate_z_selection_vectors(size_t element);
+    
+    /**
+     * 计算时间消耗：模拟z维PIR折叠过程中的同态乘法
+     * 执行约z×b次矩阵乘法，代表同态扩展的开销
+     */
+    size_t simulate_gsw_external_product_cost();
+    
+    // ===== 原有函数 =====
     
     /**
      * 为指定客户端生成随机数据集（Setup）
@@ -160,7 +234,7 @@ private:
      * 客户端增量编码（Update）
      */
     MatrixType client_incremental_update(Client& client, const std::set<uint64_t>& X_add,
-                                         const std::set<uint64_t>& X_del);
+                                                                                      const std::set<uint64_t>& X_del);
     
     /**
      * 服务器端增量更新（Update）
@@ -168,16 +242,15 @@ private:
     void server_incremental_update();
     
     /**
-     * 查询向量生成
-     * 按照协议文档中的Algorithm 9
+     * 【改进版】服务器处理PIR查询：z维维度折叠
+     * 模拟GSW同态扩展和线性检索的完整过程
+     * - 执行z轮维度折叠
+     * - 每轮使用约b/L^i的矩阵乘法
+     * - 总计约z×b次同态运算
      */
-    std::vector<VectorType> generate_query_vectors(uint64_t element);
-    
-    /**
-     * 服务器处理PIR查询（同态扩展和线性检索）
-     * 模拟GSW外部积和矩阵乘法
-     */
-    VectorType server_process_pir_query(const std::vector<VectorType>& query_vectors);
+    VectorType server_process_pir_query_z_dimension(
+        const std::vector<VectorType>& z_selection_vectors
+    );
     
     /**
      * 客户端解密和交集判断

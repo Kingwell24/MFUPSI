@@ -1,0 +1,4 @@
+n,dataset_size,d_1,b,epsilon,w,z,N_lwe,q,setup_client_time_ms,setup_server_time_ms,setup_comm_MB,update_client_time_ms,update_server_time_ms,update_comm_MB,query_client_gen_ms,query_server_ms,query_decrypt_ms,query_comm_KB
+3,1024,128,29,0.2,30,2,512,4294967291,10,0,0.0849609,1,0,0.0849609,0,0,0,1280
+n,dataset_size,d_1,b,epsilon,w,z,N_lwe,q,setup_client_time_ms,setup_server_time_ms,setup_comm_MB,update_client_time_ms,update_server_time_ms,update_comm_MB,query_client_gen_ms,query_server_ms,query_decrypt_ms,query_comm_KB
+10,65536,512,1536,0.2,80,2,1024,18446744073709551557,10337,51,60,132,81,60,0,2789,0,12800

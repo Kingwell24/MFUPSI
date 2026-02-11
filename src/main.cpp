@@ -118,7 +118,7 @@ int main() {
         configs.push_back(cfg);
     }
     
-    // 可以添加更多配置进行不同规模的测试
+    // // 可以添加更多配置进行不同规模的测试
     // {
     //     auto cfg = Config::get_performance_config();
     //     configs.push_back(cfg);
@@ -147,8 +147,8 @@ int main() {
             
             // 阶段二：Update（可选，取决于要求）
             std::cout << "\n【阶段二】执行Update..." << std::endl;
-            size_t num_update_clients = std::min(
-                (size_t)3,  // 更新3个客户端
+            size_t num_update_clients = std::max(
+                (size_t)0, 
                 config.num_clients
             );
             protocol.update_phase(num_update_clients);

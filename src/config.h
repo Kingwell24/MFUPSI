@@ -46,7 +46,8 @@ public:
         ExperimentConfig cfg;
         cfg.num_clients = 10;
         cfg.dataset_size = (1 << 16);  // 2^16 = 65536
-        cfg.num_updates = cfg.dataset_size / 100;  // 1% of dataset
+        // cfg.num_updates = cfg.dataset_size / 100;  // 1% of dataset
+        cfg.num_updates = 1;  // 1% of dataset
         cfg.num_queries = 100;
         cfg.partition_size = 512;
         cfg.expansion_factor = 0.2;
@@ -78,9 +79,9 @@ public:
     // 获取性能测试配置（大规模）
     static ExperimentConfig get_performance_config() {
         ExperimentConfig cfg;
-        cfg.num_clients = 50;
+        cfg.num_clients = 10;
         cfg.dataset_size = (1 << 20);  // 2^20 = 1MB
-        cfg.num_updates = static_cast<size_t>(cfg.dataset_size * 0.05);  // 5%
+        cfg.num_updates = static_cast<size_t>(cfg.dataset_size * 0.0005);  // 0.05%
         cfg.num_queries = 1000;
         cfg.partition_size = 1024;
         cfg.expansion_factor = 0.2;
